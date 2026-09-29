@@ -1,0 +1,13 @@
+[Unit]
+Description=Treinos maintenance container (manual task)
+
+[Container]
+ContainerName=treinos-maintenance
+Image=localhost/treinos-maintenance:local
+Pod=treinos.pod
+Volume=%h/treinos/database:/opt/treinos/database:ro
+Volume=treinos-backups.volume:/backups
+
+[Service]
+Type=oneshot
+Restart=no

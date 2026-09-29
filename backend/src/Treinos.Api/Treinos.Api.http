@@ -1,0 +1,6 @@
+@Treinos.Api_HostAddress = http://localhost:0
+
+GET {{Treinos.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

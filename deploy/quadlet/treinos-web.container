@@ -1,0 +1,16 @@
+[Unit]
+Description=Treinos PWA e proxy
+Requires=treinos-api.service
+After=treinos-api.service
+
+[Container]
+ContainerName=treinos-web
+Image=localhost/treinos-web:local
+Pod=treinos.pod
+Volume=treinos-tls.volume:/certs:ro
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

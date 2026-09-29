@@ -1,0 +1,18 @@
+[Unit]
+Description=Treinos API
+Requires=treinos-db.service
+After=treinos-db.service
+
+[Container]
+ContainerName=treinos-api
+Image=localhost/treinos-api:local
+Pod=treinos.pod
+Volume=treinos-dp-keys.volume:/var/lib/treinos/keys
+Secret=treinos-db-password,type=mount,target=/run/secrets/db-password
+EnvironmentFile=%h/.config/treinos/api.env
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

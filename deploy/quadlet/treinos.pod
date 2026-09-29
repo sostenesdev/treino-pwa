@@ -1,0 +1,7 @@
+[Pod]
+PodName=treinos-pod
+PublishPort=8443:8443
+ExitPolicy=continue
+
+[Install]
+WantedBy=default.target

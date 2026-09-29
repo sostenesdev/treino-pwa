@@ -1,0 +1,1 @@
+{"root":["./src/main.tsx","./src/offline/store.ts","./src/shared/api.ts","./src/shared/types.ts","./src/sync/sync.ts","./vite.config.ts"],"version":"5.9.3"}

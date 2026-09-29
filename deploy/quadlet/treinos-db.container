@@ -1,0 +1,20 @@
+[Unit]
+Description=Treinos MariaDB
+
+[Container]
+ContainerName=treinos-db
+Image=docker.io/library/mariadb:11.8
+Pod=treinos.pod
+Volume=treinos-db-data.volume:/var/lib/mysql
+Secret=treinos-db-root-password,type=mount,target=/run/secrets/db-root-password
+Secret=treinos-db-password,type=mount,target=/run/secrets/db-password
+Environment=MARIADB_ROOT_PASSWORD_FILE=/run/secrets/db-root-password
+Environment=MARIADB_DATABASE=treinos
+Environment=MARIADB_USER=treinos_api
+Environment=MARIADB_PASSWORD_FILE=/run/secrets/db-password
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

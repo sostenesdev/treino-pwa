@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Treinos.Api/Treinos.Api.csproj" />
+    <Project Path="src/Treinos.Application/Treinos.Application.csproj" />
+    <Project Path="src/Treinos.Domain/Treinos.Domain.csproj" />
+    <Project Path="src/Treinos.Infrastructure/Treinos.Infrastructure.csproj" />
+    <Project Path="src/Treinos.Migrator/Treinos.Migrator.csproj" />
+  </Folder>
+</Solution>
