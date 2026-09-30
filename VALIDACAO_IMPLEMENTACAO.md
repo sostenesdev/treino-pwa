@@ -48,3 +48,9 @@ Ainda requer execução no ambiente/dispositivo de destino:
 - Exercícios de atualização/rollback e restauração completa em outro servidor, com configuração/secrets externos.
 
 Os três testes de Chromium e a restauração dentro do pod validam a jornada automatizada; não constituem homologação desses dispositivos nem implantação em produção. A execução com o aplicativo fechado e a identificação de Wi-Fi dependem do navegador; o envio manual permanece disponível.
+
+## Compose em HTTP
+
+O `compose.yaml` foi validado com Podman 6.1.2 e podman-compose 1.6.0: serviços no mesmo pod e namespace de rede, banco saudável, migrações concluídas e readiness pelo frontend. Um pod separado validou bootstrap do administrador, CSRF, login, cookie e leitura do bootstrap por HTTP. O pod `pod_treinos-compose` está disponível em `http://localhost:8080`.
+
+O merge do `compose.https.yaml` foi conferido com domínio/e-mail de exemplo; nenhuma emissão de certificado Let’s Encrypt foi solicitada. A configuração HTTP utiliza Development; a configuração opcional HTTPS ativa Production e cookies seguros.

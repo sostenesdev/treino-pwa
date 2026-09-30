@@ -62,11 +62,14 @@ builder.Services.AddRateLimiter(o =>
 builder.Services.AddControllers();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
-builder.Services.AddAntiforgery(o => { o.HeaderName = "X-CSRF-TOKEN"; o.Cookie.Name="__Host-treinos-csrf"; o.Cookie.Path="/"; o.Cookie.SecurePolicy=CookieSecurePolicy.Always; o.Cookie.SameSite=SameSiteMode.Lax; });
+var requireHttpsCookies=builder.Configuration.GetValue<bool>("Auth:RequireHttpsCookies",true);
+if(!requireHttpsCookies && !builder.Environment.IsDevelopment())
+    throw new InvalidOperationException("Cookies HTTP são permitidos somente no ambiente Development.");
+builder.Services.AddAntiforgery(o => { o.HeaderName = "X-CSRF-TOKEN"; o.Cookie.Name=requireHttpsCookies?"__Host-treinos-csrf":"treinos-csrf"; o.Cookie.Path="/"; o.Cookie.SecurePolicy=requireHttpsCookies?CookieSecurePolicy.Always:CookieSecurePolicy.SameAsRequest; o.Cookie.SameSite=SameSiteMode.Lax; });
 builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(builder.Configuration["DataProtection:KeysPath"] ?? "/var/lib/treinos/keys"));
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(o =>
 {
-    o.Cookie.Name = "__Host-treinos"; o.Cookie.HttpOnly = true; o.Cookie.SecurePolicy = CookieSecurePolicy.Always; o.Cookie.SameSite = SameSiteMode.Lax; o.Cookie.Path = "/";
+    o.Cookie.Name = requireHttpsCookies?"__Host-treinos":"treinos"; o.Cookie.HttpOnly = true; o.Cookie.SecurePolicy = requireHttpsCookies?CookieSecurePolicy.Always:CookieSecurePolicy.SameAsRequest; o.Cookie.SameSite = SameSiteMode.Lax; o.Cookie.Path = "/";
     o.ExpireTimeSpan = TimeSpan.FromHours(8); o.SlidingExpiration = false;
     o.Events.OnRedirectToLogin = c => { c.Response.StatusCode = 401; return Task.CompletedTask; };
     o.Events.OnRedirectToAccessDenied = c => { c.Response.StatusCode = 403; return Task.CompletedTask; };
@@ -82,6 +85,12 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
 });
 builder.Services.AddAuthorization(o => o.AddPolicy("CanCreateUsers", p => p.RequireRole("administrator")));
 var app = builder.Build();
+if (builder.Configuration.GetValue<bool>("Database:RequireMigrations"))
+{
+    await using var db = await app.Services.GetRequiredService<Database>().Open();
+    if (await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM schema_migrations WHERE version IN ('001_schema_treinos.sql','003_pwa_usuarios_email.sql')") != 2)
+        throw new InvalidOperationException("Aplique as migrações antes de iniciar a API.");
+}
 app.UseForwardedHeaders();
 app.UseExceptionHandler();
 app.UseRateLimiter();

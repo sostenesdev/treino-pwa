@@ -1,0 +1,149 @@
+name: treinos-compose
+
+# Requer o provedor podman-compose: todos os serviços compartilham a rede do pod.
+x-podman:
+  in_pod: true
+  pod_args: ["--infra=true", "--share=net", "--infra-name=${COMPOSE_PROJECT_NAME}-infra", "--publish=${TREINOS_WEB_PORT:-8080}:80"]
+
+x-pod-network: &pod-network "container:${COMPOSE_PROJECT_NAME}-infra"
+
+x-backend-build: &backend-build
+  context: .
+  dockerfile: deploy/Containerfile.api
+  args:
+    DOTNET_SDK_IMAGE: "${DOTNET_SDK_IMAGE:-mcr.microsoft.com/dotnet/sdk@sha256:35d40304542c8689331f8cab17c65926cdf48fe711e289321d71924b230a7d29}"
+    DOTNET_ASPNET_IMAGE: "${DOTNET_ASPNET_IMAGE:-mcr.microsoft.com/dotnet/aspnet@sha256:2d584d8147faddb0d678c5748d47953e5b8e18621ed4fb7049a91381d9d7746f}"
+
+services:
+  db:
+    network_mode: *pod-network
+    image: "${DB_IMAGE:-docker.io/library/mariadb@sha256:79d59758afc91b89b120b0a8904d637f5a3b3e1c4900f29b740d6d46c72fef68}"
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: treinos
+      MARIADB_USER: treinos_api
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db-root-password
+      MARIADB_PASSWORD_FILE: /run/secrets/db-password
+    secrets:
+      - source: db-root-password
+        target: db-root-password
+      - source: db-password
+        target: db-password
+      - source: db-migrator-password
+        target: db-migrator-password
+      - source: db-backup-password
+        target: db-backup-password
+    volumes:
+      - db-data:/var/lib/mysql
+      - ./deploy/db-init.sh:/docker-entrypoint-initdb.d/10-treinos-users.sh:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  migrator:
+    network_mode: *pod-network
+    image: localhost/treinos-compose-migrator:local
+    build:
+      context: .
+      dockerfile: deploy/Containerfile.migrator
+      args:
+        DOTNET_SDK_IMAGE: "${DOTNET_SDK_IMAGE:-mcr.microsoft.com/dotnet/sdk@sha256:35d40304542c8689331f8cab17c65926cdf48fe711e289321d71924b230a7d29}"
+        DOTNET_ASPNET_IMAGE: "${DOTNET_ASPNET_IMAGE:-mcr.microsoft.com/dotnet/aspnet@sha256:2d584d8147faddb0d678c5748d47953e5b8e18621ed4fb7049a91381d9d7746f}"
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__Treinos: "Server=127.0.0.1;Port=3306;Database=treinos;User ID=treinos_migrator;"
+      Database__PasswordFile: /run/secrets/db-password
+    secrets:
+      - source: db-migrator-password
+        target: db-password
+    volumes:
+      - ./database:/opt/treinos/database:ro
+
+  back:
+    network_mode: *pod-network
+    image: localhost/treinos-compose-back:local
+    build: *backend-build
+    restart: unless-stopped
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    environment: &backend-environment
+      ASPNETCORE_ENVIRONMENT: Development
+      Auth__RequireHttpsCookies: "false"
+      ASPNETCORE_URLS: http://127.0.0.1:8081
+      ConnectionStrings__Treinos: "Server=127.0.0.1;Port=3306;Database=treinos;User ID=treinos_api;"
+      Database__PasswordFile: /run/secrets/db-password
+      Database__RequireMigrations: "true"
+      DataProtection__KeysPath: /var/lib/treinos/keys
+      Email__Enabled: "false"
+      App__PublicBaseUrl: "${TREINOS_PUBLIC_URL:-http://localhost:8080}"
+    secrets:
+      - source: db-password
+        target: db-password
+    volumes:
+      - dp-keys:/var/lib/treinos/keys
+
+  front:
+    network_mode: *pod-network
+    image: localhost/treinos-compose-front:local
+    build:
+      context: .
+      dockerfile: deploy/Containerfile.web
+      args:
+        NODE_IMAGE: "${NODE_IMAGE:-docker.io/library/node@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293}"
+        CADDY_IMAGE: "${CADDY_IMAGE:-docker.io/library/caddy@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b}"
+    restart: unless-stopped
+    depends_on:
+      back:
+        condition: service_started
+    volumes:
+      - ./deploy/Caddyfile.compose:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  bootstrap-admin:
+    network_mode: *pod-network
+    profiles: [maintenance]
+    image: localhost/treinos-compose-back:local
+    build: *backend-build
+    restart: "no"
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    command: [bootstrap-admin]
+    environment:
+      <<: *backend-environment
+      BOOTSTRAP_ADMIN_EMAIL: "${BOOTSTRAP_ADMIN_EMAIL:-admin@example.invalid}"
+      BOOTSTRAP_ADMIN_NAME: "${BOOTSTRAP_ADMIN_NAME:-Administrador}"
+      BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/admin-password
+    secrets:
+      - source: db-password
+        target: db-password
+      - source: admin-password
+        target: admin-password
+    volumes:
+      - dp-keys:/var/lib/treinos/keys
+
+volumes:
+  db-data:
+  dp-keys:
+  caddy-data:
+  caddy-config:
+
+secrets:
+  db-root-password:
+    file: ${TREINOS_SECRETS_DIR:-./.secrets}/db-root-password
+  db-password:
+    file: ${TREINOS_SECRETS_DIR:-./.secrets}/db-password
+  db-migrator-password:
+    file: ${TREINOS_SECRETS_DIR:-./.secrets}/db-migrator-password
+  db-backup-password:
+    file: ${TREINOS_SECRETS_DIR:-./.secrets}/db-backup-password
+  admin-password:
+    file: ${TREINOS_SECRETS_DIR:-./.secrets}/admin-password

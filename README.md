@@ -4,6 +4,40 @@ PWA de treinos com React/TypeScript, API .NET 10, Identity com stores Dapper e M
 
 ## Executar e validar
 
+Para subir com o `compose.yaml` da raiz, use o provedor `podman-compose`:
+
+```sh
+export PODMAN_COMPOSE_PROVIDER=podman-compose
+deploy/scripts/compose-prepare.sh
+podman compose up -d --build
+podman compose --profile maintenance run -T --rm --no-deps bootstrap-admin
+```
+
+Para personalizar porta e conta inicial, copie `.env.example` para `.env` e ajuste os valores antes de subir.
+
+Acesse **http://localhost:8080**. `front`, `back`, `db` e o migrator pertencem ao pod `pod_treinos-compose`; somente a porta do frontend é publicada. Banco e chaves usam volumes persistentes. O script gera senhas aleatórias em `.secrets/`, preserva arquivos existentes e não imprime os valores. O administrador local usa `admin@example.invalid`; sua senha está em `.secrets/admin-password`. Configure `BOOTSTRAP_ADMIN_EMAIL` e `BOOTSTRAP_ADMIN_NAME` antes do comando de bootstrap se desejar outros valores.
+
+O Compose padrão usa HTTP e ambiente `Development`, com cookies compatíveis com HTTP. HTTPS pode ser ativado posteriormente com o Caddy/Let’s Encrypt, sem alterar as imagens:
+
+```sh
+export TREINOS_DOMAIN=treinos.seu-dominio.com
+export LETSENCRYPT_EMAIL=operador@seu-dominio.com
+podman compose down
+podman compose -f compose.yaml -f compose.https.yaml up -d
+```
+
+A configuração opcional publica 80/443, solicita e renova certificados automaticamente, guarda-os em `caddy-data` e ativa cookies seguros no backend. O domínio deve apontar para o servidor, e as portas 80/443 devem estar disponíveis externamente. Use `podman compose -f compose.yaml -f compose.https.yaml` nos comandos seguintes enquanto essa configuração estiver ativa. É necessário recriar o pod para mudar suas portas; `down` preserva os volumes. O arquivo opcional utiliza `!override`, suportado pelo `podman-compose` 1.6 usado na validação.
+
+Em `localhost`, navegadores permitem service worker mesmo com HTTP. Para acessar o PWA offline por um endereço de rede ou domínio, ative HTTPS. Veja também [implantação](deploy/README.md).
+
+```sh
+podman compose ps
+podman compose logs -f
+podman compose down
+```
+
+`down` preserva os volumes; `down -v` apaga os dados. Para mudar a porta do host, defina `TREINOS_WEB_PORT`; a porta interna permanece 80. `TREINOS_SECRETS_DIR` permite usar outro diretório de segredos. A recuperação por e-mail fica desabilitada nessa configuração local.
+
 O ambiente completo precisa de Podman; Node, .NET e MariaDB executam em containers do mesmo pod. Para produção em Linux, veja [implantação e operação](deploy/README.md). No macOS, os testes usam a máquina Podman; as unidades Quadlet destinam-se ao systemd do servidor Linux.
 
 ```sh

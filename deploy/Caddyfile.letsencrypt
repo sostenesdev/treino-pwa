@@ -1,0 +1,18 @@
+{
+    email {$LETSENCRYPT_EMAIL}
+}
+
+{$TREINOS_DOMAIN} {
+    encode zstd gzip
+    header Referrer-Policy "no-referrer"
+    @api path /api/*
+    handle @api {
+        reverse_proxy 127.0.0.1:8081
+        header Cache-Control "no-store"
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}

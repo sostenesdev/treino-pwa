@@ -1,0 +1,26 @@
+# Após podman compose down: podman compose -f compose.yaml -f compose.https.yaml up -d
+x-podman:
+  pod_args: !override
+    - --infra=true
+    - --share=net
+    - --infra-name=${COMPOSE_PROJECT_NAME}-infra
+    - --publish=80:80
+    - --publish=443:443
+
+services:
+  back:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Auth__RequireHttpsCookies: "true"
+      App__PublicBaseUrl: https://${TREINOS_DOMAIN:?Configure TREINOS_DOMAIN}
+  front:
+    environment:
+      TREINOS_DOMAIN: ${TREINOS_DOMAIN:?Configure TREINOS_DOMAIN}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:?Configure LETSENCRYPT_EMAIL}
+    volumes:
+      - ./deploy/Caddyfile.letsencrypt:/etc/caddy/Caddyfile:ro
+  bootstrap-admin:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      Auth__RequireHttpsCookies: "true"
+      App__PublicBaseUrl: https://${TREINOS_DOMAIN:?Configure TREINOS_DOMAIN}
