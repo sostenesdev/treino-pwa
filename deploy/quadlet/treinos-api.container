@@ -1,7 +1,7 @@
 [Unit]
 Description=Treinos API
-Requires=treinos-db.service
-After=treinos-db.service
+Requires=treinos-db.service treinos-migrator.service
+After=treinos-db.service treinos-migrator.service
 
 [Container]
 ContainerName=treinos-api

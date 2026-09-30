@@ -13,7 +13,13 @@ if (!string.IsNullOrEmpty(passwordFile))
 }
 var sqlRoot = Environment.GetEnvironmentVariable("TREINOS_SQL_ROOT") ?? "/opt/treinos/database/migrations";
 var files = new[] { "001_schema_treinos.sql", "003_pwa_usuarios_email.sql" };
-await using var db = await new Database(connection).Open();
+var database=new Database(connection);
+MySqlConnection? ready=null;
+for(var attempt=0; attempt<60; attempt++) {
+    try { ready=await database.Open(); break; }
+    catch(MySqlException) when(attempt<59) { await Task.Delay(1000); }
+}
+await using var db = ready ?? throw new InvalidOperationException("Banco indisponível.");
 if (await db.ExecuteScalarAsync<int>("SELECT GET_LOCK('treinos_schema_migrations',30)") != 1) throw new Exception("Migração em uso.");
 try
 {

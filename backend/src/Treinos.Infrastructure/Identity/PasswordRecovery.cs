@@ -4,19 +4,24 @@ using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.AspNetCore.DataProtection;
 using MimeKit;
-using Treinos.Infrastructure;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.WebUtilities;
+using Treinos.Application;
 
-namespace Treinos.Api;
+namespace Treinos.Infrastructure.Identity;
 
-public sealed class PasswordRecovery(AccountService accounts, Database database, IDataProtectionProvider protection, IConfiguration config)
+public sealed class PasswordRecovery(UserManager<AppUser> users, Database database, IDataProtectionProvider protection, IConfiguration config) : IPasswordRecovery
 {
-    private readonly IDataProtector tokens = protection.CreateProtector("Treinos.PasswordReset.v1");
     private readonly IDataProtector messages = protection.CreateProtector("Treinos.EmailOutbox.v1");
     public bool Enabled => config.GetValue<bool>("Email:Enabled");
     public async Task Request(string email)
     {
         if (!Enabled) throw new InvalidOperationException("EMAIL_NOT_CONFIGURED");
-        var user = await accounts.FindByEmail(email);
+        var user = await users.FindByEmailAsync(email.Trim());
         if (user is null) return;
         await using var db = await database.Open();
         var recent = await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM email_outbox WHERE user_id=@Id AND created_at_utc>DATE_SUB(UTC_TIMESTAMP(6),INTERVAL 1 HOUR)", new { user.Id });
@@ -24,7 +29,7 @@ public sealed class PasswordRecovery(AccountService accounts, Database database,
         var baseUrl = config["App:PublicBaseUrl"] ?? throw new InvalidOperationException("App:PublicBaseUrl ausente");
         if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) throw new InvalidOperationException("URL pública HTTPS inválida.");
         var expires = DateTime.UtcNow.AddHours(1);
-        var token = tokens.Protect($"{user.Id}|{user.SecurityStamp}|{expires:O}|{Guid.NewGuid()}");
+        var token = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(await users.GeneratePasswordResetTokenAsync(user)));
         var url = $"{baseUrl.TrimEnd('/')}/reset-password?id={Uri.EscapeDataString(user.Id)}&token={Uri.EscapeDataString(token)}";
         var ciphertext = Encoding.UTF8.GetBytes(messages.Protect(url));
         await db.ExecuteAsync("INSERT INTO email_outbox(id,user_id,recipient_email,template_key,payload_ciphertext,token_expires_at_utc) VALUES(@id,@userId,@email,'password_reset',@ciphertext,@expires)", new { id = Guid.NewGuid().ToString(), userId = user.Id, email = user.Email, ciphertext, expires });
@@ -34,9 +39,10 @@ public sealed class PasswordRecovery(AccountService accounts, Database database,
         if (newPassword.Length is < 12 or > 128) return false;
         try
         {
-            var parts = tokens.Unprotect(token).Split('|');
-            if (parts.Length != 4 || parts[0] != id || DateTime.Parse(parts[2], null, System.Globalization.DateTimeStyles.RoundtripKind) < DateTime.UtcNow) return false;
-            return await accounts.ResetWithStamp(id, parts[1], newPassword);
+            var user = await users.FindByIdAsync(id);
+            if (user is null) return false;
+            user.MustChangePassword = false;
+            return (await users.ResetPasswordAsync(user, Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(token)), newPassword)).Succeeded;
         }
         catch { return false; }
     }
@@ -62,7 +68,7 @@ public sealed class EmailDispatcher(IServiceScopeFactory scopes, IConfiguration 
             {
                 using var scope = scopes.CreateScope(); var dbFactory = scope.ServiceProvider.GetRequiredService<Database>(); var recovery = scope.ServiceProvider.GetRequiredService<PasswordRecovery>();
                 await using var db = await dbFactory.Open(stoppingToken);
-                await db.ExecuteAsync("UPDATE email_outbox SET status='expired',payload_ciphertext=X'' WHERE status IN ('pending','processing') AND token_expires_at_utc<=UTC_TIMESTAMP(6)");
+                await db.ExecuteAsync("UPDATE email_outbox SET status='expired',payload_ciphertext=X'' WHERE status IN ('pending','processing','failed') AND token_expires_at_utc<=UTC_TIMESTAMP(6)");
                 var row = await db.QuerySingleOrDefaultAsync<OutboxRow>("SELECT id,recipient_email,payload_ciphertext,attempts FROM email_outbox WHERE ((status='pending' AND available_at_utc<=UTC_TIMESTAMP(6)) OR (status='processing' AND lease_until_utc<UTC_TIMESTAMP(6))) AND token_expires_at_utc>UTC_TIMESTAMP(6) ORDER BY created_at_utc LIMIT 1");
                 if (row is not null)
                 {

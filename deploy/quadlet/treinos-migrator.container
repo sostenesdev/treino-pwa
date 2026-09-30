@@ -7,11 +7,12 @@ After=treinos-db.service
 ContainerName=treinos-migrator
 Image=localhost/treinos-migrator:local
 Pod=treinos.pod
-Secret=treinos-db-password,type=mount,target=/run/secrets/db-password
-Environment=ConnectionStrings__Treinos=Server=127.0.0.1;Port=3306;Database=treinos;User ID=treinos_api;
+Secret=treinos-db-migrator-password,type=mount,target=/run/secrets/db-password
+Environment="ConnectionStrings__Treinos=Server=127.0.0.1;Port=3306;Database=treinos;User ID=treinos_migrator;"
 Environment=Database__PasswordFile=/run/secrets/db-password
 Volume=%h/treinos/database:/opt/treinos/database:ro
 
 [Service]
 Type=oneshot
+RemainAfterExit=yes
 Restart=no

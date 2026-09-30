@@ -1,0 +1,35 @@
+import { test, expect } from '@playwright/test';
+test('CSRF, criação restrita, troca inicial e recuperação com SMTP de captura', async ({ request }) => {
+  const csrf = async () => (await (await request.get('/api/auth/csrf')).json()).token as string;
+  const post = async (path: string, data: object) => request.post('/api' + path, { data, headers: { 'X-CSRF-TOKEN': await csrf() } });
+  await expect.poll(async () => (await request.get('/api/health/ready')).status()).toBe(200);
+  expect((await request.post('/api/auth/login', { data: { email: process.env.TREINOS_TEST_EMAIL, password: process.env.TREINOS_TEST_PASSWORD } })).status()).toBe(403);
+  expect((await post('/auth/login', { email: process.env.TREINOS_TEST_EMAIL, password: process.env.TREINOS_TEST_PASSWORD })).status()).toBe(200);
+  const email = `common-${Date.now()}@example.invalid`, password = 'Senha inicial longa 2026';
+  const created = await post('/admin/users', { name: 'Comum de teste', email, initialPassword: password, role: 'administrator' });
+  expect(created.status()).toBe(200);
+  const account = await created.json();
+  expect(account.role).toBe('common');
+  await post('/auth/logout', {});
+  expect((await post('/auth/login', { email, password })).status()).toBe(200);
+  expect((await request.get('/api/sync/bootstrap')).status()).toBe(403);
+  const changed = 'Senha alterada longa 2026';
+  expect((await post('/auth/change-password', { oldPassword: password, newPassword: changed })).status()).toBe(204);
+  expect((await post('/auth/login', { email, password: changed })).status()).toBe(200);
+  expect((await post('/admin/users', { name: 'Intruso', email: 'intruso@example.invalid', initialPassword: changed })).status()).toBe(403);
+  expect((await post('/auth/forgot-password', { email })).status()).toBe(202);
+  let messageId = '';
+  await expect.poll(async () => {
+    const inbox = await (await request.get('http://127.0.0.1:8025/api/v1/messages')).json();
+    messageId = inbox.messages.find((m: { ID: string; To: { Address: string }[] }) => m.To.some(t => t.Address === email))?.ID || '';
+    return !!messageId;
+  }, { timeout: 30000 }).toBe(true);
+  const message = await (await request.get(`http://127.0.0.1:8025/api/v1/message/${messageId}`)).json();
+  const url = new URL(message.Text.match(/https:\/\/\S+/)[0]);
+  expect(url.origin).toBe('https://localhost:8443');
+  const reset = { id: url.searchParams.get('id'), token: url.searchParams.get('token'), newPassword: 'Senha recuperada longa 2026' };
+  expect((await post('/auth/reset-password', reset)).status()).toBe(204);
+  expect((await request.get('/api/auth/me')).status()).toBe(401);
+  expect((await post('/auth/reset-password', reset)).status()).toBe(400);
+  expect((await post('/auth/login', { email, password: reset.newPassword })).status()).toBe(200);
+});

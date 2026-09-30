@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
+using System.Net;
 
 using System.Security.Claims;
 using Dapper;
@@ -9,8 +11,13 @@ using Treinos.Api;
 using Treinos.Application;
 using Treinos.Infrastructure;
 using MySqlConnector;
+using Treinos.Infrastructure.Identity;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 1048576);
 DefaultTypeMap.MatchNamesWithUnderscores = true;
 var connection = builder.Configuration.GetConnectionString("Treinos") ?? throw new InvalidOperationException("ConnectionStrings:Treinos ausente");
 var passwordFile = builder.Configuration["Database:PasswordFile"];
@@ -23,13 +30,39 @@ builder.Services.AddSingleton(new Database(connection));
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HttpCurrentUser>();
 builder.Services.AddScoped<ITrainingService, TrainingService>();
+builder.Services.AddScoped<SessionCommands>();
+builder.Services.Configure<ForwardedHeadersOptions>(o => {
+    o.ForwardedHeaders=ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    o.KnownProxies.Add(IPAddress.Loopback); o.KnownProxies.Add(IPAddress.IPv6Loopback);
+});
+builder.Services.AddIdentityCore<AppUser>(o =>
+{
+    o.Password.RequiredLength = 12; o.Password.RequireDigit = false; o.Password.RequireLowercase = false;
+    o.Password.RequireUppercase = false; o.Password.RequireNonAlphanumeric = false; o.User.RequireUniqueEmail = true;
+    o.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15); o.Lockout.MaxFailedAccessAttempts = 5;
+}).AddUserStore<DapperUserStore>().AddDefaultTokenProviders();
+builder.Services.Configure<DataProtectionTokenProviderOptions>(o => o.TokenLifespan = TimeSpan.FromHours(1));
+builder.Services.AddScoped<IPasswordValidator<AppUser>, PasswordLengthValidator>();
+builder.Services.AddScoped<IUserClaimsPrincipalFactory<AppUser>, PrincipalFactory>();
 builder.Services.AddScoped<AccountService>();
+builder.Services.AddScoped<IAccountService>(s => s.GetRequiredService<AccountService>());
 builder.Services.AddScoped<PasswordRecovery>();
+builder.Services.AddScoped<IPasswordRecovery>(s => s.GetRequiredService<PasswordRecovery>());
 builder.Services.AddHostedService<EmailDispatcher>();
-builder.Services.AddSingleton<IPasswordHasher<AppUser>, PasswordHasher<AppUser>>();
+builder.Services.AddHostedService<RetentionMaintenance>();
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = 429;
+    o.OnRejected = async (context, ct) => {
+        context.HttpContext.Response.Headers.RetryAfter = context.Lease.TryGetMetadata(MetadataName.RetryAfter,out var retry) ? Math.Ceiling(retry.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture) : "60";
+        await context.HttpContext.Response.WriteAsJsonAsync(new {code="RATE_LIMITED"},ct);
+    };
+    o.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
 builder.Services.AddControllers();
 builder.Services.AddProblemDetails();
-builder.Services.AddAntiforgery(o => o.HeaderName = "X-CSRF-TOKEN");
+builder.Services.AddExceptionHandler<ApiExceptionHandler>();
+builder.Services.AddAntiforgery(o => { o.HeaderName = "X-CSRF-TOKEN"; o.Cookie.Name="__Host-treinos-csrf"; o.Cookie.Path="/"; o.Cookie.SecurePolicy=CookieSecurePolicy.Always; o.Cookie.SameSite=SameSiteMode.Lax; });
 builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(builder.Configuration["DataProtection:KeysPath"] ?? "/var/lib/treinos/keys"));
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(o =>
 {
@@ -42,18 +75,21 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         var id = c.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
         var stamp = c.Principal?.FindFirstValue("security_stamp");
         if (id is null || stamp is null) { c.RejectPrincipal(); return; }
-        var account = await c.HttpContext.RequestServices.GetRequiredService<AccountService>().FindById(id);
-        if (account is null || account.SecurityStamp != stamp) { c.RejectPrincipal(); return; }
-        if (account.MustChangePassword && c.HttpContext.Request.Path.StartsWithSegments("/api") && !c.HttpContext.Request.Path.StartsWithSegments("/api/auth")) c.HttpContext.Items["password_change_required"] = true;
+        var account = await c.HttpContext.RequestServices.GetRequiredService<IAccountService>().ValidateSession(id, stamp, c.Principal!.FindFirstValue(ClaimTypes.Role) ?? "");
+        if (account is null) { c.RejectPrincipal(); return; }
+        if (account.MustChangePassword && c.HttpContext.Request.Path.StartsWithSegments("/api") && !new[] {"/api/auth/me", "/api/auth/csrf", "/api/auth/logout", "/api/auth/change-password"}.Contains(c.HttpContext.Request.Path.Value)) c.HttpContext.Items["password_change_required"] = true;
     };
 });
 builder.Services.AddAuthorization(o => o.AddPolicy("CanCreateUsers", p => p.RequireRole("administrator")));
 var app = builder.Build();
+app.UseForwardedHeaders();
 app.UseExceptionHandler();
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.Use(async (context, next) =>
 {
+    if(context.Request.Path.StartsWithSegments("/api")) context.Response.Headers.CacheControl="no-store";
     if (context.Items.ContainsKey("password_change_required")) { context.Response.StatusCode = 403; await context.Response.WriteAsJsonAsync(new { code = "PASSWORD_CHANGE_REQUIRED" }); return; }
     if (context.Request.Path.StartsWithSegments("/api") && context.Request.Method is not ("GET" or "HEAD" or "OPTIONS"))
     {
@@ -63,7 +99,8 @@ app.Use(async (context, next) =>
     await next();
 });
 app.MapGet("/api/health/live", () => Results.Ok(new { status = "ok" }));
-app.MapGet("/api/health/ready", async (Database database) => { await using var db = await database.Open(); await db.ExecuteScalarAsync<int>("SELECT 1"); return Results.Ok(new { status = "ok" }); });
+app.MapGet("/api/health/connectivity", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/api/health/ready", async (Database database) => { await using var db = await database.Open(); if(await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM schema_migrations WHERE version IN ('001_schema_treinos.sql','003_pwa_usuarios_email.sql')") != 2) return Results.StatusCode(503); return Results.Ok(new { status = "ok" }); });
 app.MapControllers();
 if (args.Contains("bootstrap-admin"))
 {
@@ -72,10 +109,8 @@ if (args.Contains("bootstrap-admin"))
     var adminPasswordFile = Environment.GetEnvironmentVariable("BOOTSTRAP_ADMIN_PASSWORD_FILE") ?? throw new InvalidOperationException("BOOTSTRAP_ADMIN_PASSWORD_FILE ausente");
     using var scope = app.Services.CreateScope();
     var accounts = scope.ServiceProvider.GetRequiredService<AccountService>();
-    var existing = await accounts.FindByEmail(email);
-    if (existing is null) { var created = await accounts.Create(name, email, (await File.ReadAllTextAsync(adminPasswordFile)).TrimEnd('\r','\n'), "administrator", false); Console.WriteLine($"Administrador criado: {created.Id}"); }
-    else if (existing.AppRole == "administrator") Console.WriteLine($"Administrador já existente: {existing.Id}");
-    else throw new InvalidOperationException("E-mail pertence a uma conta comum.");
+    var account = await accounts.BootstrapAdministrator(name, email, (await File.ReadAllTextAsync(adminPasswordFile)).TrimEnd('\r','\n'), Environment.GetEnvironmentVariable("BOOTSTRAP_PROMOTE_USER_ID"));
+    Console.WriteLine($"Administrador provisionado: {account.Id}");
     return;
 }
 app.Run();

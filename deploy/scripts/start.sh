@@ -1,3 +1,3 @@
 #!/bin/sh
 set -eu
-podman pod start treinos-pod
+systemctl --user start treinos-web.service

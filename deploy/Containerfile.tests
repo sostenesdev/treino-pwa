@@ -1,0 +1,7 @@
+ARG DOTNET_SDK_IMAGE
+FROM ${DOTNET_SDK_IMAGE}
+WORKDIR /src
+COPY backend/ ./backend/
+RUN dotnet restore backend/tests/Treinos.Tests/Treinos.Tests.csproj --locked-mode -m:1 && dotnet build backend/tests/Treinos.Tests/Treinos.Tests.csproj --no-restore -c Release -m:1
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
+ENTRYPOINT ["dotnet","test","backend/tests/Treinos.Tests/Treinos.Tests.csproj","-c","Release","--no-build","--no-restore","--logger","console;verbosity=normal"]

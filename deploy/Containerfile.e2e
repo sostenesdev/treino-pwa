@@ -1,0 +1,7 @@
+ARG PLAYWRIGHT_IMAGE
+FROM ${PLAYWRIGHT_IMAGE}
+WORKDIR /tests
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+ENTRYPOINT ["npx","playwright","test"]

@@ -6,4 +6,7 @@
     <Project Path="src/Treinos.Infrastructure/Treinos.Infrastructure.csproj" />
     <Project Path="src/Treinos.Migrator/Treinos.Migrator.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Treinos.Tests/Treinos.Tests.csproj" />
+  </Folder>
 </Solution>
