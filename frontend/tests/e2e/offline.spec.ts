@@ -34,7 +34,7 @@ test('prepara PWA, conclui sem carga offline, recarrega e sincroniza uma vez', a
   await page.goto('/history');
   await expect(page.locator('.list-row')).toHaveCount(count);
   await context.setOffline(false);
-  await page.locator('.header-right button').click();
+  await page.locator('.header-right button').last().click();
   await page.getByRole('button', { name: 'Sincronizar agora', exact: true }).click();
   await expect(page.locator('.sync-pill')).toHaveText('0 pendências', { timeout: 30000 });
   await page.getByRole('button', { name: 'Sincronizar agora', exact: true }).click();
@@ -62,7 +62,7 @@ test('modo detalhado conclui uma série sem inventar carga', async ({ page, cont
   await page.getByRole('button', { name: 'Concluir treino', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Novo registro' })).toBeVisible();
   await context.setOffline(false);
-  await page.locator('.header-right button').click();
+  await page.locator('.header-right button').last().click();
   await page.getByRole('button', { name: 'Sincronizar agora', exact: true }).click();
   await expect(page.locator('.sync-pill')).toHaveText('0 pendências');
   const data = await (await page.request.get('/api/sync/bootstrap')).json();

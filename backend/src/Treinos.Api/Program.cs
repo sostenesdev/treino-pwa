@@ -29,6 +29,7 @@ if (!string.IsNullOrEmpty(passwordFile))
 builder.Services.AddSingleton(new Database(connection));
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HttpCurrentUser>();
+builder.Services.AddScoped<ITrainingOwner, HttpTrainingOwner>();
 builder.Services.AddScoped<ITrainingService, TrainingService>();
 builder.Services.AddScoped<SessionCommands>();
 builder.Services.Configure<ForwardedHeadersOptions>(o => {
@@ -88,7 +89,7 @@ var app = builder.Build();
 if (builder.Configuration.GetValue<bool>("Database:RequireMigrations"))
 {
     await using var db = await app.Services.GetRequiredService<Database>().Open();
-    if (await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM schema_migrations WHERE version IN ('001_schema_treinos.sql','003_pwa_usuarios_email.sql')") != 2)
+    if (await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM schema_migrations WHERE version IN ('001_schema_treinos.sql','003_pwa_usuarios_email.sql','004_hierarquia_e_administracao.sql')") != 3)
         throw new InvalidOperationException("Aplique as migrações antes de iniciar a API.");
 }
 app.UseForwardedHeaders();
@@ -105,11 +106,23 @@ app.Use(async (context, next) =>
         try { await context.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(context); }
         catch (AntiforgeryValidationException) { context.Response.StatusCode = 403; await context.Response.WriteAsJsonAsync(new { code = "CSRF_INVALID" }); return; }
     }
+    if(context.User.Identity?.IsAuthenticated==true)
+    {
+        var target=context.Request.Headers["X-Training-User"].ToString();
+        if(context.Request.RouteValues.TryGetValue("userId",out var routeOwner))target=routeOwner?.ToString()??target;
+        if(!string.IsNullOrEmpty(target)) {
+            var actor=context.User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if(target!=actor && !context.User.IsInRole("administrator"))throw new UnauthorizedAccessException("Somente administradores podem acessar outro usuário.");
+            if(!Guid.TryParse(target,out _))throw new ArgumentException("Usuário inválido.");
+            if(await context.RequestServices.GetRequiredService<IAccountService>().User(target,context.RequestAborted) is null)throw new ResourceNotFoundException();
+            context.Items["training_owner"]=target;
+        }
+    }
     await next();
 });
 app.MapGet("/api/health/live", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/api/health/connectivity", () => Results.Ok(new { status = "ok" }));
-app.MapGet("/api/health/ready", async (Database database) => { await using var db = await database.Open(); if(await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM schema_migrations WHERE version IN ('001_schema_treinos.sql','003_pwa_usuarios_email.sql')") != 2) return Results.StatusCode(503); return Results.Ok(new { status = "ok" }); });
+app.MapGet("/api/health/ready", async (Database database) => { await using var db = await database.Open(); if(await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM schema_migrations WHERE version IN ('001_schema_treinos.sql','003_pwa_usuarios_email.sql','004_hierarquia_e_administracao.sql')") != 3) return Results.StatusCode(503); return Results.Ok(new { status = "ok" }); });
 app.MapControllers();
 if (args.Contains("bootstrap-admin"))
 {

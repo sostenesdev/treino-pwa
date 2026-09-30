@@ -459,3 +459,113 @@ caption {
 a {
   color: #1e5b45;
 }
+
+.exercise-instructions {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.admin-panel > * {
+  margin-bottom: 1.5rem;
+}
+
+.catalog-layout {
+  display: grid;
+  gap: 22px;
+}
+.training-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 18px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e2e9df;
+}
+.training-toolbar > label {
+  flex: 1;
+  min-width: 200px;
+  margin-bottom: 0;
+}
+.training-toolbar .actions {
+  margin: 0;
+}
+.sheets-heading {
+  margin: 24px 0 18px;
+}
+.sheets-heading h3 {
+  margin: 0;
+}
+.sheet-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.sheet-card {
+  padding: 20px;
+  border: 1px solid #dce5dc;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+}
+.sheet-card h4 {
+  margin: 12px 0 6px;
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+.sheet-card p {
+  margin-bottom: 0;
+}
+.sheet-card .actions {
+  gap: 8px;
+}
+.sheet-card .actions button {
+  padding: 10px 12px;
+}
+.sheet-code {
+  display: inline-block;
+  border-radius: 8px;
+  padding: 5px 10px;
+  background: #e8eee7;
+  color: #275540;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.sheet-fields {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 14px;
+}
+.sheets-manager .editor {
+  margin-top: 24px;
+}
+.sheets-manager fieldset {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+  margin: 0;
+}
+.sheets-manager h3:focus {
+  outline: 2px solid #b5d6c3;
+  outline-offset: 6px;
+}
+.sheet-view li {
+  padding: 10px 0;
+  border-bottom: 1px solid #e2e9df;
+}
+.sheet-editor .exercise select {
+  width: 100%;
+  min-width: 0;
+}
+@media (max-width: 700px) {
+  .sheet-list,
+  .sheet-fields {
+    grid-template-columns: 1fr;
+  }
+  .sheet-card .actions button {
+    flex: 1;
+  }
+  .sheets-manager > .section-title {
+    flex-wrap: wrap;
+  }
+}

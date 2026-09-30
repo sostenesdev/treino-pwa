@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { api, token } from "./shared/api";
+import { api, ownerApi, token } from "./shared/api";
 import {
   activeAccount,
   lockAccount,
@@ -35,12 +35,21 @@ const Reports = lazy(() =>
 import { UpdatePrompt } from "./features/sync/UpdatePrompt";
 import { PlansManager } from "./features/plans/PlansManager";
 import { Workout } from "./features/sessions/Workout";
+import { AdminPanel, ProfileForm } from "./features/admin/AdminPanel";
 import { SyncPanel } from "./features/sync/SyncPanel";
 function App() {
   const queryClient = useQueryClient();
   const navigate = useNavigate(),
     location = useLocation();
-  type Tab = "home" | "workout" | "history" | "catalog" | "reports" | "account";
+  type Tab =
+    | "home"
+    | "workout"
+    | "history"
+    | "catalog"
+    | "exercises"
+    | "reports"
+    | "account"
+    | "admin";
   const tab: Tab =
     location.pathname === "/" ? "home" : (location.pathname.slice(1) as Tab);
   const setTab = (value: Tab) => navigate(value === "home" ? "/" : "/" + value);
@@ -173,6 +182,11 @@ function App() {
           <span className="network">
             {navigator.onLine ? "Online" : "Offline"} · {networkType()}
           </span>
+          {account.role === "administrator" && (
+            <button className="text" onClick={() => setTab("admin")}>
+              Administração
+            </button>
+          )}
           <button className="text" onClick={() => setTab("account")}>
             {account.displayName}
           </button>
@@ -191,10 +205,14 @@ function App() {
                   : tab === "history"
                     ? "Histórico"
                     : tab === "catalog"
-                      ? "Exercícios e fichas"
-                      : tab === "reports"
-                        ? "Progressão"
-                        : "Sua conta"}
+                      ? "Fichas de treino"
+                      : tab === "exercises"
+                        ? "Exercícios"
+                        : tab === "reports"
+                          ? "Progressão"
+                          : tab === "admin"
+                            ? "Administração"
+                            : "Sua conta"}
             </h1>
           </div>
           <span className="sync-pill">
@@ -322,7 +340,39 @@ function App() {
                 )}
               </section>
             )}
-            {tab === "catalog" && <Catalog data={data} onReload={prep} />}
+            {tab === "catalog" && (
+              <Catalog
+                key="sheets"
+                data={data}
+                onReload={prep}
+                section="sheets"
+              />
+            )}
+            {tab === "exercises" && (
+              <Catalog
+                key="exercises"
+                data={data}
+                onReload={prep}
+                section="exercises"
+              />
+            )}
+            {tab === "admin" &&
+              (account.role === "administrator" ? (
+                <AdminPanel
+                  actor={account}
+                  onOwnAccountChanged={logout}
+                  renderResources={(resources, reload, ownerId) => (
+                    <Catalog
+                      key={ownerId}
+                      data={resources}
+                      onReload={reload}
+                      ownerId={ownerId}
+                    />
+                  )}
+                />
+              ) : (
+                <p role="alert">Acesso restrito ao administrador.</p>
+              ))}
             {tab === "reports" && (
               <Suspense fallback={<p>Carregando relatórios…</p>}>
                 <Reports accountId={account.id} history={history} data={data} />
@@ -354,7 +404,7 @@ function App() {
                   onLogin={logout}
                 />
                 <ChangePassword onChanged={logout} />
-                {account.role === "administrator" && <NewUser />}
+                <ProfileForm account={account} onChanged={logout} />
               </section>
             )}
           </>
@@ -367,6 +417,7 @@ function App() {
             ["workout", "Treinar"],
             ["history", "Histórico"],
             ["catalog", "Fichas"],
+            ["exercises", "Exercícios"],
             ["reports", "Relatórios"],
           ] as const
         ).map(([key, label]) => (
@@ -592,70 +643,14 @@ function ChangePassword({ onChanged }: { onChanged: () => void }) {
     </div>
   );
 }
-function NewUser() {
-  const [name, setName] = useState(""),
-    [email, setEmail] = useState(""),
-    [initialPassword, setPassword] = useState(""),
-    [message, setMessage] = useState("");
-  return (
-    <div className="password-box">
-      <h3>Cadastrar usuário comum</h3>
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          try {
-            await api("/admin/users", {
-              method: "POST",
-              body: JSON.stringify({ name, email, initialPassword }),
-            });
-            setMessage(
-              "Conta criada. Informe a senha inicial ao usuário por um meio seguro.",
-            );
-            setName("");
-            setEmail("");
-            setPassword("");
-          } catch (err) {
-            setMessage((err as Error).message);
-          }
-        }}
-      >
-        <label>
-          Nome
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-        </label>
-        <label>
-          E-mail
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </label>
-        <label>
-          Senha inicial
-          <input
-            type="password"
-            minLength={12}
-            value={initialPassword}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </label>
-        <button>Cadastrar</button>
-      </form>
-      {message && <p>{message}</p>}
-    </div>
-  );
-}
 function Catalog({
   data,
   onReload,
+  ownerId,
+  section = "all",
 }: {
+  ownerId?: string;
+  section?: "sheets" | "exercises" | "all";
   data: Bootstrap | null;
   onReload: () => Promise<void>;
 }) {
@@ -664,20 +659,15 @@ function Catalog({
     [showForm, setShowForm] = useState(false),
     [message, setMessage] = useState("");
   const [name, setName] = useState(""),
-    [muscleGroup, setMuscle] = useState(""),
     [equipment, setEquipment] = useState(""),
-    [measurementType, setMeasure] = useState<"reps" | "duration">("reps"),
-    [loadKind, setKind] = useState("external"),
-    [loadBasis, setBasis] = useState("total"),
     [instructions, setInstructions] = useState("");
+  useEffect(() => {
+    if (!data && navigator.onLine) void onReload();
+  }, []);
   const edit = (e?: Exercise) => {
     setEditing(e || null);
     setName(e?.name || "");
-    setMuscle(e?.muscleGroup || "");
     setEquipment(e?.equipment || "");
-    setMeasure(e?.measurementType || "reps");
-    setKind(e?.loadKind || "external");
-    setBasis(e?.loadBasis || "total");
     setInstructions(e?.instructions || "");
     setShowForm(true);
   };
@@ -685,21 +675,21 @@ function Catalog({
     ev.preventDefault();
     setMessage("");
     try {
-      await api("/exercises" + (editing ? "/" + editing.id : ""), {
-        method: editing ? "PUT" : "POST",
-        body: JSON.stringify({
-          name,
-          muscleGroup,
-          equipment,
-          measurementType,
-          loadKind,
-          loadBasis,
-          instructions,
-          expectedVersion: editing?.rowVersion || 0,
-        }),
-      });
+      await ownerApi(
+        ownerId,
+        "/exercises" + (editing ? "/" + editing.id : ""),
+        {
+          method: editing ? "PUT" : "POST",
+          body: JSON.stringify({
+            name,
+            equipment,
+            instructions,
+            expectedVersion: editing?.rowVersion || 0,
+          }),
+        },
+      );
       setShowForm(false);
-      onReload();
+      await onReload();
     } catch (err) {
       setMessage((err as Error).message);
     }
@@ -707,168 +697,105 @@ function Catalog({
   const remove = async (e: Exercise) => {
     if (!confirm(`Arquivar ${e.name}?`)) return;
     try {
-      await api(`/exercises/${e.id}?expectedVersion=${e.rowVersion}`, {
-        method: "DELETE",
-      });
-      onReload();
+      await ownerApi(
+        ownerId,
+        `/exercises/${e.id}?expectedVersion=${e.rowVersion}`,
+        {
+          method: "DELETE",
+        },
+      );
+      await onReload();
     } catch (err) {
       setMessage((err as Error).message);
     }
   };
   return (
-    <section className="grid">
-      <div className="card">
-        <div className="section-title">
-          <h2>Suas fichas</h2>
-          <button className="secondary small" onClick={onReload}>
-            Atualizar
-          </button>
-        </div>
-        <PlansManager data={data} onReload={onReload} />
-        {data?.plans.map((p) => (
-          <div key={p.id}>
-            <h3>{p.name}</h3>
-            {p.templates.map((t) => (
-              <details key={t.id}>
-                <summary>
-                  {t.name} · {t.items.length} exercícios
-                </summary>
-                {t.items.map((i) => (
-                  <p key={i.id}>
-                    {i.position}.{" "}
-                    {data.exercises.find((e) => e.id === i.exerciseId)?.name} ·{" "}
-                    {i.targetSets} séries ·{" "}
-                    {i.repsMin
-                      ? `${i.repsMin}–${i.repsMax} reps`
-                      : `${i.durationSecondsMin}–${i.durationSecondsMax} s`}
-                  </p>
-                ))}
-              </details>
-            ))}
+    <section className="catalog-layout">
+      {section !== "exercises" && (
+        <PlansManager data={data} onReload={onReload} ownerId={ownerId} />
+      )}
+      {section !== "sheets" && (
+        <div className="card">
+          <div className="section-title">
+            <h2>Catálogo de exercícios</h2>
+            <button className="secondary small" onClick={() => edit()}>
+              Novo exercício
+            </button>
           </div>
-        ))}
-        {!data && <p>Prepare este dispositivo para consultar as fichas.</p>}
-      </div>
-      <div className="card">
-        <div className="section-title">
-          <h2>Catálogo</h2>
-          <button className="secondary small" onClick={() => edit()}>
-            Novo exercício
-          </button>
-        </div>
-        {message && (
-          <p role="alert" className="error">
-            {message}
-          </p>
-        )}
-        {showForm && (
-          <form onSubmit={submit}>
-            <h3>{editing ? "Editar exercício" : "Novo exercício"}</h3>
-            <label>
-              Nome
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                maxLength={160}
-              />
-            </label>
-            <label>
-              Grupo muscular
-              <input
-                value={muscleGroup}
-                onChange={(e) => setMuscle(e.target.value)}
-                required
-                maxLength={80}
-              />
-            </label>
-            <label>
-              Equipamento
-              <input
-                value={equipment}
-                onChange={(e) => setEquipment(e.target.value)}
-              />
-            </label>
-            <label>
-              Medição
-              <select
-                value={measurementType}
-                onChange={(e) =>
-                  setMeasure(e.target.value as "reps" | "duration")
-                }
-              >
-                <option value="reps">Repetições</option>
-                <option value="duration">Duração</option>
-              </select>
-            </label>
-            <label>
-              Tipo de carga
-              <select
-                value={loadKind}
-                onChange={(e) => setKind(e.target.value)}
-              >
-                <option value="external">Externa</option>
-                <option value="bodyweight">Peso corporal</option>
-                <option value="assisted">Assistida</option>
-              </select>
-            </label>
-            <label>
-              Convenção
-              <select
-                value={loadBasis}
-                onChange={(e) => setBasis(e.target.value)}
-              >
-                <option value="total">kg totais</option>
-                <option value="per_hand">kg por halter</option>
-                <option value="machine_display">kg da máquina</option>
-                <option value="added_weight">kg adicionais</option>
-              </select>
-            </label>
-            <label>
-              Instruções
-              <textarea
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-              />
-            </label>
-            <div className="actions">
-              <button>Salvar</button>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => setShowForm(false)}
-              >
-                Cancelar
-              </button>
-            </div>
-          </form>
-        )}
-        <input
-          placeholder="Buscar exercício"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        {data?.exercises
-          .filter((e) => e.name.toLowerCase().includes(q.toLowerCase()))
-          .map((e) => (
-            <div className="list-row" key={e.id}>
-              <div>
-                <strong>{e.name}</strong>
-                <small>
-                  {e.muscleGroup} · {e.equipment}
-                </small>
-              </div>
+          {message && (
+            <p role="alert" className="error">
+              {message}
+            </p>
+          )}
+          {showForm && (
+            <form onSubmit={submit}>
+              <h3>{editing ? "Editar exercício" : "Novo exercício"}</h3>
+              <label>
+                Nome
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  maxLength={160}
+                />
+              </label>
+              <label>
+                Equipamento
+                <input
+                  maxLength={16000}
+                  value={equipment}
+                  onChange={(e) => setEquipment(e.target.value)}
+                />
+              </label>
+              <label>
+                Instruções
+                <textarea
+                  rows={6}
+                  maxLength={200000}
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                />
+              </label>
               <div className="actions">
-                <button className="text small" onClick={() => edit(e)}>
-                  Editar
-                </button>
-                <button className="danger small" onClick={() => remove(e)}>
-                  Arquivar
+                <button>Salvar</button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setShowForm(false)}
+                >
+                  Cancelar
                 </button>
               </div>
-            </div>
-          ))}
-      </div>
+            </form>
+          )}
+          <input
+            placeholder="Buscar exercício"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          {data?.exercises
+            .filter((e) => e.name.toLowerCase().includes(q.toLowerCase()))
+            .map((e) => (
+              <div className="list-row" key={e.id}>
+                <div>
+                  <strong>{e.name}</strong>
+                  <small>{e.equipment || "Sem equipamento informado"}</small>
+                  {e.instructions && (
+                    <p className="exercise-instructions">{e.instructions}</p>
+                  )}
+                </div>
+                <div className="actions">
+                  <button className="text small" onClick={() => edit(e)}>
+                    Editar
+                  </button>
+                  <button className="danger small" onClick={() => remove(e)}>
+                    Arquivar
+                  </button>
+                </div>
+              </div>
+            ))}
+        </div>
+      )}
     </section>
   );
 }

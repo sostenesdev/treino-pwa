@@ -61,6 +61,15 @@ public sealed class AdminController(IAccountService accounts) : ControllerBase
         catch (ArgumentException e) { return BadRequest(new { code = "INVALID_USER", detail = e.Message }); }
     }
 }
+[ApiController, Route("api/users"), Authorize]
+public sealed class UsersController(IAccountService accounts) : ControllerBase
+{
+    [HttpGet, Authorize(Policy="CanCreateUsers")] public Task<List<UserDto>> List(CancellationToken ct)=>accounts.Users(ct);
+    [HttpGet("{id}")] public async Task<IActionResult> Get(string id,CancellationToken ct)=>await accounts.User(id,ct) is {} user?Ok(user):NotFound();
+    [HttpPost, Authorize(Policy="CanCreateUsers")] public async Task<IActionResult> Create(UserInput input,CancellationToken ct){var user=await accounts.CreateUser(input,ct);return Created($"/api/users/{user.Id}",user);}
+    [HttpPut("{id}")] public Task<UserDto> Update(string id,UserInput input,CancellationToken ct)=>accounts.UpdateUser(id,input,ct);
+    [HttpDelete("{id}"), Authorize(Policy="CanCreateUsers")] public async Task<IActionResult> Delete(string id,[FromQuery]long expectedVersion,CancellationToken ct){await accounts.DeleteUser(id,expectedVersion,ct);return NoContent();}
+}
 [ApiController, Route("api/exercises"), Authorize]
 public sealed class ExercisesController(ITrainingService service) : ControllerBase
 {
@@ -70,7 +79,7 @@ public sealed class ExercisesController(ITrainingService service) : ControllerBa
     [HttpPut("{id}")] public async Task<IActionResult> Update(string id, ExerciseInput input, CancellationToken ct) { try { return Ok(await service.SaveExercise(id, input, ct)); } catch (InvalidOperationException) { return Conflict(); } catch (ArgumentException e) { return BadRequest(e.Message); } }
     [HttpDelete("{id}")] public async Task<IActionResult> Delete(string id, [FromQuery] long expectedVersion, CancellationToken ct) => Ok(await service.DeleteExercise(id, expectedVersion, ct));
 }
-[ApiController, Route("api/plans"), Authorize]
+[ApiController, Route("api/plans"), Route("api/trainings"), Route("api/users/{userId}/trainings"), Authorize]
 public sealed class PlansController(ITrainingService service) : ControllerBase
 {
     [HttpGet] public async Task<object> List(CancellationToken ct) => await service.Plans(ct);
@@ -78,9 +87,10 @@ public sealed class PlansController(ITrainingService service) : ControllerBase
     [HttpDelete("{id}")] public async Task<IActionResult> Delete(string id,[FromQuery] long expectedVersion,CancellationToken ct)=>Ok(new{version=await service.ArchiveDefinition("plan",id,expectedVersion,ct)});
     [HttpPost] public async Task<IActionResult> Create(PlanInput input, CancellationToken ct) { try { var id = await service.SavePlan(null, input, ct); return Created($"/api/plans/{id}", new { id }); } catch (ArgumentException e) { return BadRequest(e.Message); } }
     [HttpPut("{id}")] public async Task<IActionResult> Update(string id, PlanInput input, CancellationToken ct) { try { await service.SavePlan(id, input, ct); return NoContent(); } catch (InvalidOperationException) { return Conflict(); } catch (ArgumentException e) { return BadRequest(e.Message); } }
-    [HttpPost("{id}/templates")] public async Task<IActionResult> CreateTemplate(string id, TemplateInput input, CancellationToken ct) { try { var templateId = await service.SaveTemplate(null, id, input, ct); return Created($"/api/templates/{templateId}", new { id = templateId }); } catch (ArgumentException e) { return BadRequest(e.Message); } }
+    [HttpGet("{id}/sheets")] public async Task<IActionResult> Sheets(string id,CancellationToken ct)=>(await service.Plans(ct)).FirstOrDefault(p=>p.Id==id) is {} training?Ok(training.Templates):NotFound();
+    [HttpPost("{id}/templates"), HttpPost("{id}/sheets")] public async Task<IActionResult> CreateTemplate(string id, TemplateInput input, CancellationToken ct) { try { var templateId = await service.SaveTemplate(null, id, input, ct); return Created($"/api/templates/{templateId}", new { id = templateId }); } catch (ArgumentException e) { return BadRequest(e.Message); } }
 }
-[ApiController, Route("api/templates"), Authorize]
+[ApiController, Route("api/templates"), Route("api/sheets"), Authorize]
 public sealed class TemplatesController(ITrainingService service) : ControllerBase
 {
     [HttpGet("{id}")] public async Task<IActionResult> Get(string id,CancellationToken ct)=>(await service.Plans(ct)).SelectMany(p=>p.Templates).FirstOrDefault(t=>t.Id==id) is {} template?Ok(template):NotFound();

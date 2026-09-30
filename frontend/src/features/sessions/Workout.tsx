@@ -142,10 +142,14 @@ export function Workout({
             }}
           >
             <option value="">Treino avulso</option>
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
+            {data?.plans.map((plan) => (
+              <optgroup key={plan.id} label={plan.name}>
+                {plan.templates.map((sheet) => (
+                  <option key={sheet.id} value={sheet.id}>
+                    {sheet.name}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>
@@ -287,7 +291,7 @@ export function Workout({
       </div>
       {draft.planInstructionsSnapshot && (
         <details>
-          <summary>Orientações do plano</summary>
+          <summary>Orientações do treino</summary>
           <p>{draft.planInstructionsSnapshot}</p>
         </details>
       )}

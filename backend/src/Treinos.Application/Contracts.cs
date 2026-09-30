@@ -4,12 +4,19 @@ namespace Treinos.Application;
 
 public record Account(string Id, string DisplayName, string Email, string Role, bool MustChangePassword, string TimeZone);
 public record AuthenticationResult(Account Account, System.Security.Claims.ClaimsPrincipal Principal);
+public record UserDto(string Id, string DisplayName, string Email, string Role, bool MustChangePassword, string TimeZone, long RowVersion);
+public record UserInput(string Name, string Email, string Role = "common", string TimeZone = "America/Sao_Paulo", string? InitialPassword = null, long ExpectedVersion = 0);
 public interface IAccountService
 {
     Task<Account?> GetCurrent(CancellationToken ct = default);
     Task<Account?> ValidateSession(string id, string stamp, string role, CancellationToken ct = default);
     Task<AuthenticationResult?> Login(string email, string password, CancellationToken ct = default);
     Task<Account> CreateCommonUser(string name, string email, string initialPassword, CancellationToken ct = default);
+    Task<List<UserDto>> Users(CancellationToken ct = default);
+    Task<UserDto?> User(string id, CancellationToken ct = default);
+    Task<UserDto> CreateUser(UserInput input, CancellationToken ct = default);
+    Task<UserDto> UpdateUser(string id, UserInput input, CancellationToken ct = default);
+    Task DeleteUser(string id, long expectedVersion, CancellationToken ct = default);
     Task<bool> ChangePassword(string oldPassword, string newPassword, CancellationToken ct = default);
 }
 public interface IPasswordRecovery
@@ -22,7 +29,7 @@ public sealed class ExerciseDto
 {
     public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string MuscleGroup { get; set; } = ""; public string? Equipment { get; set; } public string MeasurementType { get; set; } = ""; public string LoadKind { get; set; } = ""; public string LoadBasis { get; set; } = ""; public string? Instructions { get; set; } public long RowVersion { get; set; }
 }
-public record ExerciseInput(string Name, string MuscleGroup, string? Equipment, string MeasurementType, string LoadKind, string LoadBasis, string? Instructions, long ExpectedVersion = 0);
+public record ExerciseInput(string Name, string? MuscleGroup = null, string? Equipment = null, string? MeasurementType = null, string? LoadKind = null, string? LoadBasis = null, string? Instructions = null, long ExpectedVersion = 0);
 public record PlanDto(string Id, string Name, string? Description, List<TemplateDto> Templates, long RowVersion, string? Instructions=null, int? IntroductorySets=null);
 public record PlanInput(string Name, string? Description, long ExpectedVersion = 0);
 public record TemplateInput(string Code, string Name, int Position, string? Notes, List<TemplateItemInput> Items, long ExpectedVersion = 0);
@@ -46,7 +53,8 @@ public sealed class SyncChange
 }
 public record SyncPage(long NextCursor, bool HasMore, long ObservedRevision, List<SyncChange> Changes);
 
-public interface ICurrentUser { string Id { get; } }
+public interface ICurrentUser { string Id { get; } bool IsAdministrator => false; }
+public interface ITrainingOwner { string OwnerId { get; } }
 public interface ITrainingService
 {
     Task<List<ExerciseDto>> Exercises(CancellationToken ct);

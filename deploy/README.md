@@ -51,7 +51,7 @@ podman run --rm --pod treinos-pod -v /caminho/certificados:/input:ro -v treinos-
 deploy/scripts/start.sh
 ```
 
-Confirme `/api/health/ready` por HTTPS. Readiness verifica banco e as migrações 001/003; `/api/health/live` e `/api/health/connectivity` são sondas simples. API responses usam `no-store`; service worker guarda somente o shell e seus arquivos estáticos.
+Confirme `/api/health/ready` por HTTPS. Readiness verifica banco e as migrações 001/003/004; `/api/health/live` e `/api/health/connectivity` são sondas simples. API responses usam `no-store`; service worker guarda somente o shell e seus arquivos estáticos.
 
 Provisione o administrador:
 
@@ -61,7 +61,7 @@ export BOOTSTRAP_ADMIN_NAME='Operador'
 deploy/scripts/bootstrap-admin.sh
 ```
 
-Reexecutar não troca a senha. Para promover uma conta existente, informe explicitamente `BOOTSTRAP_PROMOTE_USER_ID`. O procedimento invalida suas sessões anteriores.
+Após o primeiro provisionamento, a tela Administração permite gerenciar contas comuns e administradores. Reexecutar o bootstrap não troca a senha. Para promover uma conta existente, informe explicitamente `BOOTSTRAP_PROMOTE_USER_ID`. O procedimento invalida suas sessões anteriores.
 
 Depois de criar uma conta comum, defina seu UUID e importe a ficha quando desejado:
 

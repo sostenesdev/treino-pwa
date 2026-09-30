@@ -1,3 +1,5 @@
+> **Revisão de arquitetura — 30/09/2026:** a solicitação posterior adota usuário → múltiplos treinos → múltiplas fichas → múltiplos exercícios. O cadastro de exercício usa Nome, Equipamento e Instruções longas. Administradores fazem CRUD de todas as entidades e podem criar/alterar perfis de usuários pelo aplicativo; contas comuns gerenciam os próprios dados e não criam usuários. Estas regras substituem as restrições anteriores de administração neste documento. A migração vigente é 001 → 003 → 004, com os scripts originais preservados. Consulte o README e ARQUITETURA.md na raiz para a API, a autorização por proprietário e a operação atual.
+
 # Plano de implementação — aplicativo de treinos
 
 Data: 29/09/2026. Entrega: especificação do MVP e scripts SQL de referência; o aplicativo ainda será implementado.

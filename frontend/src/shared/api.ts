@@ -53,3 +53,17 @@ export async function api<T>(
   if (response.status === 204) return undefined as T;
   return response.json();
 }
+
+export function ownerApi<T>(
+  ownerId: string | undefined,
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const headers = new Headers(options.headers);
+  if (ownerId) headers.set("X-Training-User", ownerId);
+  // api merges headers as an object, so normalize Headers here.
+  return api<T>(path, {
+    ...options,
+    headers: Object.fromEntries(headers.entries()),
+  });
+}

@@ -63,7 +63,24 @@ Os testes de integração exigem `TREINOS_TEST_CONNECTION`; sem ela, são explic
 
 Os scripts de `Webapp_Treinos_Plano_e_SQL/` foram preservados em `database/migrations/` e `database/seeds/`. O migrator registra checksum e serializa execução. O seed é uma operação separada para uma conta já criada: A com 8 exercícios, B com 7 e C com 8, totalizando 23 definições. Não cria usuários nem treinos realizados.
 
-Somente o operador provisiona administradores. Administradores cadastram contas comuns, cuja primeira senha deve ser trocada antes de acessar os treinos. A recuperação utiliza tokens Identity, fila criptografada e SMTP configurável; fica desabilitada enquanto o operador não configurar o serviço.
+O operador provisiona o primeiro administrador. Na tela **Administração**, administradores fazem CRUD de usuários comuns e administradores e gerenciam os dados de qualquer conta. A primeira senha de contas criadas pelo aplicativo deve ser trocada antes de acessar os treinos. A recuperação utiliza tokens Identity, fila criptografada e SMTP configurável; fica desabilitada enquanto o operador não configurar o serviço.
+
+## Hierarquia e permissões
+
+Cada usuário tem vários **treinos**; cada treino tem várias **fichas**; cada ficha contém vários exercícios ordenados. O cadastro de exercício contém **Nome**, **Equipamento** e **Instruções** (texto longo). Um exercício do catálogo do usuário pode ser reutilizado em suas fichas. Séries, repetições, descanso e alternativas pertencem à prescrição da ficha; cargas e resultados pertencem aos registros de execução. Metadados de medição dos exercícios importados são preservados para manter duração, carga e histórico compatíveis.
+
+| Ação | Comum | Administrador |
+|---|---|---|
+| CRUD de treinos, fichas, exercícios e execuções | Própria conta | Qualquer conta |
+| Consultar/editar cadastro próprio | Sim, sem alterar perfil | Sim |
+| Listar, criar, editar perfis e excluir usuários | Não | Sim |
+| Consultar dados de outros usuários | Não | Sim |
+
+A exclusão é lógica, preservando histórico e referências. Excluir uma conta bloqueia login e recuperação; alterar seu cadastro ou perfil revoga suas sessões. O último administrador ativo não pode ser excluído ou rebaixado. Edições exigem a versão corrente para evitar sobrescrever mudanças de outro acesso.
+
+O administrador seleciona **Usuário para gerenciar** e opera online. Dados de outra conta não são gravados em seu IndexedDB nem enviados por sua fila offline. Alterações entram no feed do proprietário para que seus dispositivos recebam as mudanças. O preparo offline continua separado por conta.
+
+A migração `004_hierarquia_e_administracao.sql` amplia os campos de texto e adiciona a exclusão lógica de usuários, preservando os dados existentes e as cargas SQL originais. Veja [arquitetura e API](ARQUITETURA.md).
 
 ## API e persistência
 

@@ -40,7 +40,11 @@ podman run --image-volume=ignore --rm --pod "$test_pod" --entrypoint npm localho
 podman run --image-volume=ignore -d --name "$test_id-mailpit" --pod "$test_pod" "$MAILPIT_IMAGE" >/dev/null
 podman run --image-volume=ignore -d --name "$test_id-api" --pod "$test_pod" -e ConnectionStrings__Treinos="$connection" -v "$test_keys:/keys" -e DataProtection__KeysPath=/keys -e ASPNETCORE_ENVIRONMENT=Development -e Email__Enabled=true -e Email__Host=127.0.0.1 -e Email__Port=1025 -e Email__TlsMode=None -e Email__FromAddress=treinos@example.invalid -e App__PublicBaseUrl=https://localhost:8443 localhost/treinos-api:local >/dev/null
 podman run --image-volume=ignore -d --name "$test_id-web" --pod "$test_pod" -v "$test_tls:/data" -v "$PWD/deploy/Caddyfile.test:/etc/caddy/Caddyfile:ro" localhost/treinos-web:local >/dev/null
-podman run --image-volume=ignore --rm --pod "$test_pod" -e TREINOS_TEST_EMAIL=ci@example.invalid -e TREINOS_TEST_PASSWORD="$test_password" localhost/treinos-e2e:local
+podman run --image-volume=ignore --rm --pod "$test_pod" -e TREINOS_TEST_EMAIL=ci@example.invalid -e TREINOS_TEST_PASSWORD="$test_password" localhost/treinos-e2e:local --grep-invert 'admin gerencia'
+# Each browser suite retains the production limit of ten auth requests/minute.
+# Restart between suites to give the independent architecture journey a fresh window.
+podman restart "$test_id-api" >/dev/null
+podman run --image-volume=ignore --rm --pod "$test_pod" -e TREINOS_TEST_EMAIL=ci@example.invalid -e TREINOS_TEST_PASSWORD="$test_password" localhost/treinos-e2e:local tests/e2e/architecture.spec.ts
 podman run --image-volume=ignore --rm --pod "$test_pod" -e MYSQL_PWD="$test_password" -v "$test_keys:/keys:ro" -v "$test_tls:/certs:ro" --entrypoint sh localhost/treinos-maintenance:local -ec '
  mariadb-dump -h 127.0.0.1 -u treinos_backup --single-transaction --skip-lock-tables treinos > /tmp/treinos.sql
  mariadb -h 127.0.0.1 -u root -e "CREATE DATABASE treinos_restore CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"

@@ -19,10 +19,10 @@ public sealed class Database(string connectionString)
     }
 }
 
-public sealed class TrainingService(Database database, ICurrentUser current) : ITrainingService
+public sealed class TrainingService(Database database, ICurrentUser current, ITrainingOwner? owner = null) : ITrainingService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-    private string UserId => current.Id;
+    private string UserId => owner is null || owner.OwnerId == current.Id ? current.Id : current.IsAdministrator ? owner.OwnerId : throw new UnauthorizedAccessException("Somente administradores podem gerenciar dados de outro usuário.");
     public async Task<List<ExerciseDto>> Exercises(CancellationToken ct)
     {
         await using var db = await database.Open(ct);
@@ -38,18 +38,19 @@ public sealed class TrainingService(Database database, ICurrentUser current) : I
     public async Task<ExerciseDto> SaveExercise(string? id, ExerciseInput input, CancellationToken ct)
     {
         if(id is not null && (!Guid.TryParse(id,out _) || input.ExpectedVersion<1))throw new ArgumentException("ID e versão são obrigatórios na edição.");
-        if (string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 160 || string.IsNullOrWhiteSpace(input.MuscleGroup) || input.MuscleGroup.Length > 80 || input.MeasurementType is not ("reps" or "duration") || input.LoadKind is not ("external" or "bodyweight" or "assisted") || input.LoadBasis is not ("total" or "per_hand" or "machine_display" or "added_weight")) throw new ArgumentException("Exercício inválido.");
+        if(string.IsNullOrWhiteSpace(input.Name) || input.Name.Length>160 || (input.Equipment?.Length ?? 0)>16000 || (input.Instructions?.Length ?? 0)>200000) throw new ArgumentException("Nome, equipamento ou instruções inválidos.");
         id ??= Guid.NewGuid().ToString();
         await using var db = await database.Open(ct);
         await using var tx = await db.BeginTransactionAsync(ct);
         await LockRevision(db, tx);
-        if(input.ExpectedVersion>0)
-        {
-            var original=await db.QuerySingleOrDefaultAsync<ExerciseDto>("SELECT id,name,muscle_group,equipment,measurement_type,load_kind,load_basis,instructions,row_version FROM exercises WHERE user_id=@UserId AND id=@id AND deleted_at_utc IS NULL",new{UserId,id},tx)??throw new ResourceNotFoundException();
+        ExerciseDto? original=null;
+        if(input.ExpectedVersion>0) {
+            original=await db.QuerySingleOrDefaultAsync<ExerciseDto>("SELECT id,name,muscle_group,equipment,measurement_type,load_kind,load_basis,instructions,row_version FROM exercises WHERE user_id=@UserId AND id=@id AND deleted_at_utc IS NULL",new{UserId,id},tx)??throw new ResourceNotFoundException();
             if(original.RowVersion!=input.ExpectedVersion)throw new InvalidOperationException("VERSION_CONFLICT");
-            var hasHistory=await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM session_exercises WHERE user_id=@UserId AND exercise_id=@id",new{UserId,id},tx)>0;
-            if(hasHistory&&(original.Equipment!=input.Equipment||original.MeasurementType!=input.MeasurementType||original.LoadKind!=input.LoadKind||original.LoadBasis!=input.LoadBasis))throw new InvalidOperationException("EXERCISE_VARIATION_REQUIRED");
         }
+        input=input with {MuscleGroup=input.MuscleGroup??original?.MuscleGroup??"Geral",MeasurementType=input.MeasurementType??original?.MeasurementType??"reps",LoadKind=input.LoadKind??original?.LoadKind??"external",LoadBasis=input.LoadBasis??original?.LoadBasis??"total"};
+        if(string.IsNullOrWhiteSpace(input.MuscleGroup)||input.MuscleGroup.Length>80||input.MeasurementType is not ("reps" or "duration")||input.LoadKind is not ("external" or "bodyweight" or "assisted")||input.LoadBasis is not ("total" or "per_hand" or "machine_display" or "added_weight"))throw new ArgumentException("Metadados inválidos.");
+        if(original is not null && await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM session_exercises WHERE user_id=@UserId AND exercise_id=@id",new{UserId,id},tx)>0 && (original.MeasurementType!=input.MeasurementType||original.LoadKind!=input.LoadKind||original.LoadBasis!=input.LoadBasis))throw new InvalidOperationException("EXERCISE_VARIATION_REQUIRED");
         var sql = input.ExpectedVersion == 0 ?
             "INSERT INTO exercises(id,user_id,name,muscle_group,equipment,measurement_type,load_kind,load_basis,instructions) VALUES(@id,@UserId,@Name,@MuscleGroup,@Equipment,@MeasurementType,@LoadKind,@LoadBasis,@Instructions)" :
             "UPDATE exercises SET name=@Name,muscle_group=@MuscleGroup,equipment=@Equipment,measurement_type=@MeasurementType,load_kind=@LoadKind,load_basis=@LoadBasis,instructions=@Instructions,row_version=row_version+1,updated_at_utc=UTC_TIMESTAMP(6) WHERE id=@id AND user_id=@UserId AND row_version=@ExpectedVersion AND deleted_at_utc IS NULL";

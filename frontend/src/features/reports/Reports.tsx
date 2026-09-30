@@ -12,15 +12,17 @@ import {
   CartesianGrid,
 } from "recharts";
 import type { Bootstrap, Session } from "../../shared/types";
-import { api } from "../../shared/api";
+import { ownerApi } from "../../shared/api";
 import { today } from "../../shared/date";
 import { localPoint, type Point } from "./projection";
 export function Reports({
   accountId,
+  ownerId,
   history,
   data,
 }: {
   accountId: string;
+  ownerId?: string;
   history: Session[];
   data: Bootstrap | null;
 }) {
@@ -31,7 +33,9 @@ export function Reports({
     }),
     [to, setTo] = useState(today()),
     [exerciseId, setExercise] = useState(""),
-    [source, setSource] = useState<"local" | "server">("local");
+    [source, setSource] = useState<"local" | "server">(
+      ownerId ? "server" : "local",
+    );
   const options = new Map<
     string,
     {
@@ -83,14 +87,20 @@ export function Reports({
   const frequency = useQuery({
     queryKey: [accountId, "frequency", from, to],
     queryFn: () =>
-      api<typeof localFrequency>(`/reports/frequency?from=${from}&to=${to}`),
+      ownerApi<typeof localFrequency>(
+        ownerId,
+        `/reports/frequency?from=${from}&to=${to}`,
+      ),
     enabled: source === "server" && valid,
     retry: false,
   });
   const progress = useQuery({
     queryKey: [accountId, "progress", exerciseId, from, to],
     queryFn: () =>
-      api<Point[]>(`/reports/exercises/${exerciseId}?from=${from}&to=${to}`),
+      ownerApi<Point[]>(
+        ownerId,
+        `/reports/exercises/${exerciseId}?from=${from}&to=${to}`,
+      ),
     enabled: source === "server" && valid && !!exerciseId,
     retry: false,
   });
@@ -138,7 +148,9 @@ export function Reports({
             value={source}
             onChange={(e) => setSource(e.target.value as typeof source)}
           >
-            <option value="local">Local, incluindo pendências</option>
+            {!ownerId && (
+              <option value="local">Local, incluindo pendências</option>
+            )}
             <option value="server">Servidor — requer conexão</option>
           </select>
         </label>

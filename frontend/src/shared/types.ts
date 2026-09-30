@@ -6,6 +6,7 @@ export type Account = {
   mustChangePassword: boolean;
   timeZone: string;
 };
+export type UserDto = Account & { rowVersion: number };
 export type Exercise = {
   id: string;
   name: string;

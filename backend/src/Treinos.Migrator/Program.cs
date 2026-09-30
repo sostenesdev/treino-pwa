@@ -12,7 +12,7 @@ if (!string.IsNullOrEmpty(passwordFile))
     connection = settings.ConnectionString;
 }
 var sqlRoot = Environment.GetEnvironmentVariable("TREINOS_SQL_ROOT") ?? "/opt/treinos/database/migrations";
-var files = new[] { "001_schema_treinos.sql", "003_pwa_usuarios_email.sql" };
+var files = new[] { "001_schema_treinos.sql", "003_pwa_usuarios_email.sql", "004_hierarquia_e_administracao.sql" };
 var database=new Database(connection);
 MySqlConnection? ready=null;
 for(var attempt=0; attempt<60; attempt++) {

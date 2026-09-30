@@ -6,6 +6,7 @@ namespace Treinos.Infrastructure.Identity;
 
 public sealed class AppUser : IdentityUser
 {
+    public long RowVersion { get; set; } = 1;
     public string DisplayName { get; set; } = "";
     public string AppRole { get; set; } = "common";
     public bool MustChangePassword { get; set; }
@@ -15,7 +16,7 @@ public sealed class AppUser : IdentityUser
 public sealed class DapperUserStore(Database database, IdentityErrorDescriber errors) :
     IUserPasswordStore<AppUser>, IUserEmailStore<AppUser>, IUserSecurityStampStore<AppUser>, IUserLockoutStore<AppUser>
 {
-    private const string Select = "SELECT id,user_name,normalized_user_name,email,normalized_email,display_name,password_hash,security_stamp,concurrency_stamp,email_confirmed,lockout_enabled,lockout_end_utc,access_failed_count,app_role,must_change_password,time_zone FROM app_users";
+    private const string Select = "SELECT id,user_name,normalized_user_name,email,normalized_email,display_name,password_hash,security_stamp,concurrency_stamp,email_confirmed,lockout_enabled,lockout_end_utc,access_failed_count,app_role,must_change_password,time_zone,row_version FROM app_users";
     public void Dispose() { }
     public async Task<IdentityResult> CreateAsync(AppUser user, CancellationToken ct)
     {
@@ -36,9 +37,9 @@ public sealed class DapperUserStore(Database database, IdentityErrorDescriber er
         await using var db = await database.Open(ct);
         try
         {
-            var count = await db.ExecuteAsync(new CommandDefinition("UPDATE app_users SET user_name=@UserName,normalized_user_name=@NormalizedUserName,email=@Email,normalized_email=@NormalizedEmail,display_name=@DisplayName,password_hash=@PasswordHash,security_stamp=@SecurityStamp,concurrency_stamp=@NewStamp,email_confirmed=@EmailConfirmed,lockout_enabled=@LockoutEnabled,lockout_end_utc=@LockoutEnd,access_failed_count=@AccessFailedCount,app_role=@AppRole,must_change_password=@MustChangePassword,time_zone=@TimeZone,row_version=row_version+1,updated_at_utc=UTC_TIMESTAMP(6) WHERE id=@Id AND concurrency_stamp=@OldStamp", parameters, cancellationToken:ct));
+            var count = await db.ExecuteAsync(new CommandDefinition("UPDATE app_users SET user_name=@UserName,normalized_user_name=@NormalizedUserName,email=@Email,normalized_email=@NormalizedEmail,display_name=@DisplayName,password_hash=@PasswordHash,security_stamp=@SecurityStamp,concurrency_stamp=@NewStamp,email_confirmed=@EmailConfirmed,lockout_enabled=@LockoutEnabled,lockout_end_utc=@LockoutEnd,access_failed_count=@AccessFailedCount,app_role=@AppRole,must_change_password=@MustChangePassword,time_zone=@TimeZone,row_version=row_version+1,updated_at_utc=UTC_TIMESTAMP(6) WHERE id=@Id AND concurrency_stamp=@OldStamp AND deleted_at_utc IS NULL", parameters, cancellationToken:ct));
             if(count!=1) return IdentityResult.Failed(errors.ConcurrencyFailure());
-            user.ConcurrencyStamp=newStamp;return IdentityResult.Success;
+            user.ConcurrencyStamp=newStamp;user.RowVersion++;return IdentityResult.Success;
         }
         catch(MySqlException e) when(e.Number==1062) { return IdentityResult.Failed(errors.DuplicateEmail(user.Email!)); }
     }
@@ -46,11 +47,18 @@ public sealed class DapperUserStore(Database database, IdentityErrorDescriber er
     {
         var p=new DynamicParameters(user); p.Add("LockoutEnd",user.LockoutEnd?.UtcDateTime); return p;
     }
-    public Task<IdentityResult> DeleteAsync(AppUser user,CancellationToken ct) => Task.FromResult(IdentityResult.Failed(new IdentityError{Code="DeletionNotSupported",Description="Contas com dados não são excluídas pelo aplicativo."}));
+    public async Task<IdentityResult> DeleteAsync(AppUser user,CancellationToken ct)
+    {
+        await using var db=await database.Open(ct); await using var tx=await db.BeginTransactionAsync(ct);
+        var count=await db.ExecuteAsync(new CommandDefinition("UPDATE app_users SET deleted_at_utc=UTC_TIMESTAMP(6),security_stamp=@stamp,concurrency_stamp=@stamp,row_version=row_version+1,updated_at_utc=UTC_TIMESTAMP(6) WHERE id=@Id AND concurrency_stamp=@ConcurrencyStamp AND deleted_at_utc IS NULL",new {user.Id,user.ConcurrencyStamp,stamp=Guid.NewGuid().ToString()},tx,cancellationToken:ct));
+        if(count!=1)return IdentityResult.Failed(errors.ConcurrencyFailure());
+        await db.ExecuteAsync(new CommandDefinition("UPDATE email_outbox SET status='expired',payload_ciphertext=X'',lease_token=NULL,lease_until_utc=NULL WHERE user_id=@Id AND status IN ('pending','processing','failed')",new{user.Id},tx,cancellationToken:ct));
+        await tx.CommitAsync(ct);return IdentityResult.Success;
+    }
     private async Task<AppUser?> Find(string condition,object parameters,CancellationToken ct)
     {
         await using var db=await database.Open(ct);
-        var row=await db.QuerySingleOrDefaultAsync<UserRow>(new CommandDefinition(Select+" WHERE "+condition,parameters,cancellationToken:ct));
+        var row=await db.QuerySingleOrDefaultAsync<UserRow>(new CommandDefinition(Select+" WHERE deleted_at_utc IS NULL AND "+condition,parameters,cancellationToken:ct));
         return row?.ToUser();
     }
     public Task<AppUser?> FindByIdAsync(string id,CancellationToken ct)=>Find("id=@id",new{id},ct);
@@ -81,7 +89,7 @@ public sealed class DapperUserStore(Database database, IdentityErrorDescriber er
     public Task SetLockoutEnabledAsync(AppUser u,bool value,CancellationToken ct){u.LockoutEnabled=value;return Task.CompletedTask;}
     private sealed class UserRow
     {
-        public string Id{get;set;}="";public string UserName{get;set;}="";public string NormalizedUserName{get;set;}="";public string Email{get;set;}="";public string NormalizedEmail{get;set;}="";public string DisplayName{get;set;}="";public string PasswordHash{get;set;}="";public string SecurityStamp{get;set;}="";public string ConcurrencyStamp{get;set;}="";public bool EmailConfirmed{get;set;}public bool LockoutEnabled{get;set;}public DateTime? LockoutEndUtc{get;set;}public int AccessFailedCount{get;set;}public string AppRole{get;set;}="common";public bool MustChangePassword{get;set;}public string TimeZone{get;set;}="America/Sao_Paulo";
-        public AppUser ToUser()=>new(){Id=Id,UserName=UserName,NormalizedUserName=NormalizedUserName,Email=Email,NormalizedEmail=NormalizedEmail,DisplayName=DisplayName,PasswordHash=PasswordHash,SecurityStamp=SecurityStamp,ConcurrencyStamp=ConcurrencyStamp,EmailConfirmed=EmailConfirmed,LockoutEnabled=LockoutEnabled,LockoutEnd=LockoutEndUtc is {} date?new DateTimeOffset(DateTime.SpecifyKind(date,DateTimeKind.Utc)):null,AccessFailedCount=AccessFailedCount,AppRole=AppRole,MustChangePassword=MustChangePassword,TimeZone=TimeZone};
+        public long RowVersion{get;set;}public string Id{get;set;}="";public string UserName{get;set;}="";public string NormalizedUserName{get;set;}="";public string Email{get;set;}="";public string NormalizedEmail{get;set;}="";public string DisplayName{get;set;}="";public string PasswordHash{get;set;}="";public string SecurityStamp{get;set;}="";public string ConcurrencyStamp{get;set;}="";public bool EmailConfirmed{get;set;}public bool LockoutEnabled{get;set;}public DateTime? LockoutEndUtc{get;set;}public int AccessFailedCount{get;set;}public string AppRole{get;set;}="common";public bool MustChangePassword{get;set;}public string TimeZone{get;set;}="America/Sao_Paulo";
+        public AppUser ToUser()=>new(){RowVersion=RowVersion,Id=Id,UserName=UserName,NormalizedUserName=NormalizedUserName,Email=Email,NormalizedEmail=NormalizedEmail,DisplayName=DisplayName,PasswordHash=PasswordHash,SecurityStamp=SecurityStamp,ConcurrencyStamp=ConcurrencyStamp,EmailConfirmed=EmailConfirmed,LockoutEnabled=LockoutEnabled,LockoutEnd=LockoutEndUtc is {} date?new DateTimeOffset(DateTime.SpecifyKind(date,DateTimeKind.Utc)):null,AccessFailedCount=AccessFailedCount,AppRole=AppRole,MustChangePassword=MustChangePassword,TimeZone=TimeZone};
     }
 }
